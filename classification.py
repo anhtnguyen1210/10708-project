@@ -5,11 +5,21 @@ import time
 import numpy as np
 
 import torch
+import neptune
 import torch.nn as nn
 import torchvision.datasets as datasets
 import torchvision.transforms as transforms
 
 from torch.utils.data import DataLoader
+from tqdm import tqdm
+
+from model.models import Model
+
+
+run = neptune.init_run(
+    project="10708/10708",
+    api_token="eyJhcGlfYWRkcmVzcyI6Imh0dHBzOi8vYXBwLm5lcHR1bmUuYWkiLCJhcGlfdXJsIjoiaHR0cHM6Ly9hcHAubmVwdHVuZS5haSIsImFwaV9rZXkiOiIxNWI1ZjhkZi1iN2I0LTQ0NDktOGEyNC1jMTY3Y2U3ZDRmMzEifQ==",
+)
 
 parser = argparse.ArgumentParser()
 parser.add_argument(
@@ -26,145 +36,12 @@ parser.add_argument("--lr", type=float, default=0.1)
 parser.add_argument("--batch_size", type=int, default=128)
 parser.add_argument("--test_batch_size", type=int, default=1000)
 
-parser.add_argument("--save", type=str, default="./experiment1")
+parser.add_argument("--save", type=str, default=".experiment1")
 parser.add_argument("--debug", action="store_true")
 parser.add_argument("--gpu", type=int, default=0)
 args = parser.parse_args()
 
-if args.adjoint:
-    from torchdiffeq import odeint_adjoint as odeint
-else:
-    from torchdiffeq import odeint
-
-
-def conv3x3(in_planes, out_planes, stride=1):
-    """3x3 convolution with padding"""
-    return nn.Conv2d(
-        in_planes, out_planes, kernel_size=3, stride=stride, padding=1, bias=False
-    )
-
-
-def conv1x1(in_planes, out_planes, stride=1):
-    """1x1 convolution"""
-    return nn.Conv2d(in_planes, out_planes, kernel_size=1, stride=stride, bias=False)
-
-
-def norm(dim):
-    return nn.GroupNorm(min(32, dim), dim)
-
-
-class ResBlock(nn.Module):
-    expansion = 1
-
-    def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(ResBlock, self).__init__()
-        self.norm1 = norm(inplanes)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
-        self.conv1 = conv3x3(inplanes, planes, stride)
-        self.norm2 = norm(planes)
-        self.conv2 = conv3x3(planes, planes)
-
-    def forward(self, x):
-        shortcut = x
-
-        out = self.relu(self.norm1(x))
-
-        if self.downsample is not None:
-            shortcut = self.downsample(out)
-
-        out = self.conv1(out)
-        out = self.norm2(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-
-        return out + shortcut
-
-
-class ConcatConv2d(nn.Module):
-    def __init__(
-        self,
-        dim_in,
-        dim_out,
-        ksize=3,
-        stride=1,
-        padding=0,
-        dilation=1,
-        groups=1,
-        bias=True,
-        transpose=False,
-    ):
-        super(ConcatConv2d, self).__init__()
-        module = nn.ConvTranspose2d if transpose else nn.Conv2d
-        self._layer = module(
-            dim_in + 1,
-            dim_out,
-            kernel_size=ksize,
-            stride=stride,
-            padding=padding,
-            dilation=dilation,
-            groups=groups,
-            bias=bias,
-        )
-
-    def forward(self, t, x):
-        tt = torch.ones_like(x[:, :1, :, :]) * t
-        ttx = torch.cat([tt, x], 1)
-        return self._layer(ttx)
-
-
-class ODEfunc(nn.Module):
-    def __init__(self, dim):
-        super(ODEfunc, self).__init__()
-        self.norm1 = norm(dim)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv1 = ConcatConv2d(dim, dim, 3, 1, 1)
-        self.norm2 = norm(dim)
-        self.conv2 = ConcatConv2d(dim, dim, 3, 1, 1)
-        self.norm3 = norm(dim)
-        self.nfe = 0
-
-    def forward(self, t, x):
-        self.nfe += 1
-        out = self.norm1(x)
-        out = self.relu(out)
-        out = self.conv1(t, out)
-        out = self.norm2(out)
-        out = self.relu(out)
-        out = self.conv2(t, out)
-        out = self.norm3(out)
-        return out
-
-
-class ODEBlock(nn.Module):
-    def __init__(self, odefunc):
-        super(ODEBlock, self).__init__()
-        self.odefunc = odefunc
-        self.integration_time = torch.tensor([0, 1]).float()
-
-    def forward(self, x):
-        self.integration_time = self.integration_time.type_as(x)
-        out = odeint(
-            self.odefunc, x, self.integration_time, rtol=args.tol, atol=args.tol
-        )
-        return out[1]
-
-    @property
-    def nfe(self):
-        return self.odefunc.nfe
-
-    @nfe.setter
-    def nfe(self, value):
-        self.odefunc.nfe = value
-
-
-class Flatten(nn.Module):
-    def __init__(self):
-        super(Flatten, self).__init__()
-
-    def forward(self, x):
-        shape = torch.prod(torch.tensor(x.shape[1:])).item()
-        return x.view(-1, shape)
+run["parameters"] = args
 
 
 class RunningAverageMeter(object):
@@ -334,36 +211,7 @@ if __name__ == "__main__":
     )
 
     is_odenet = args.network == "odenet"
-
-    if args.downsampling_method == "conv":
-        downsampling_layers = [
-            nn.Conv2d(1, 64, 3, 1),
-            norm(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, 4, 2, 1),
-            norm(64),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(64, 64, 4, 2, 1),
-        ]
-    elif args.downsampling_method == "res":
-        downsampling_layers = [
-            nn.Conv2d(1, 64, 3, 1),
-            ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
-            ResBlock(64, 64, stride=2, downsample=conv1x1(64, 64, 2)),
-        ]
-
-    feature_layers = (
-        [ODEBlock(ODEfunc(64))] if is_odenet else [ResBlock(64, 64) for _ in range(6)]
-    )
-    fc_layers = [
-        norm(64),
-        nn.ReLU(inplace=True),
-        nn.AdaptiveAvgPool2d((1, 1)),
-        Flatten(),
-        nn.Linear(64, 10),
-    ]
-
-    model = nn.Sequential(*downsampling_layers, *feature_layers, *fc_layers).to(device)
+    model = Model(is_odenet, args.downsampling_method).to(device)
 
     logger.info(model)
     logger.info("Number of parameters: {}".format(count_parameters(model)))
@@ -394,7 +242,8 @@ if __name__ == "__main__":
     end = time.time()
 
     print("Start training")
-    for itr in range(args.nepochs * batches_per_epoch):
+    for itr in tqdm(range(args.nepochs * batches_per_epoch)):
+        print(1)
         for param_group in optimizer.param_groups:
             param_group["lr"] = lr_fn(itr)
 
@@ -406,15 +255,15 @@ if __name__ == "__main__":
         loss = criterion(logits, y)
 
         if is_odenet:
-            nfe_forward = feature_layers[0].nfe
-            feature_layers[0].nfe = 0
+            nfe_forward = model.feature_layer.nfe
+            model.feature_layer.nfe = 0
 
         loss.backward()
         optimizer.step()
 
         if is_odenet:
-            nfe_backward = feature_layers[0].nfe
-            feature_layers[0].nfe = 0
+            nfe_backward = model.feature_layer.nfe
+            model.feature_layer.nfe = 0
 
         batch_time_meter.update(time.time() - end)
         if is_odenet:
