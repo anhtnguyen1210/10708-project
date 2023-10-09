@@ -333,8 +333,9 @@ if __name__ == '__main__':
     b_nfe_meter = RunningAverageMeter()
     end = time.time()
 
+    print("Start training")
     for itr in range(args.nepochs * batches_per_epoch):
-
+       
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr_fn(itr)
 
@@ -362,7 +363,7 @@ if __name__ == '__main__':
             b_nfe_meter.update(nfe_backward)
         end = time.time()
 
-        if itr % batches_per_epoch == 0:
+        if itr % batches_per_epoch == 0 or True:
             with torch.no_grad():
                 train_acc = accuracy(model, train_eval_loader)
                 val_acc = accuracy(model, test_loader)
