@@ -12,8 +12,12 @@ import torchvision.transforms as transforms
 
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+from pathlib import Path
 
 from model.models import Model
+from model.utils import count_parameters, accuracy, learning_rate_with_decay
+from dataset.datasets import get_mnist_loaders
+from dataset.utils import inf_generator
 
 
 run = neptune.init_run(
@@ -63,113 +67,6 @@ class RunningAverageMeter(object):
         self.val = val
 
 
-def get_mnist_loaders(data_aug=False, batch_size=128, test_batch_size=1000, perc=1.0):
-    if data_aug:
-        transform_train = transforms.Compose(
-            [
-                transforms.RandomCrop(28, padding=4),
-                transforms.ToTensor(),
-            ]
-        )
-    else:
-        transform_train = transforms.Compose(
-            [
-                transforms.ToTensor(),
-            ]
-        )
-
-    transform_test = transforms.Compose(
-        [
-            transforms.ToTensor(),
-        ]
-    )
-
-    train_loader = DataLoader(
-        datasets.MNIST(
-            root=".data/mnist", train=True, download=True, transform=transform_train
-        ),
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=2,
-        drop_last=True,
-    )
-
-    train_eval_loader = DataLoader(
-        datasets.MNIST(
-            root=".data/mnist", train=True, download=True, transform=transform_test
-        ),
-        batch_size=test_batch_size,
-        shuffle=False,
-        num_workers=2,
-        drop_last=True,
-    )
-
-    test_loader = DataLoader(
-        datasets.MNIST(
-            root=".data/mnist", train=False, download=True, transform=transform_test
-        ),
-        batch_size=test_batch_size,
-        shuffle=False,
-        num_workers=2,
-        drop_last=True,
-    )
-
-    return train_loader, test_loader, train_eval_loader
-
-
-def inf_generator(iterable):
-    """Allows training with DataLoaders in a single infinite loop:
-    for i, (x, y) in enumerate(inf_generator(train_loader)):
-    """
-    iterator = iterable.__iter__()
-    while True:
-        try:
-            yield iterator.__next__()
-        except StopIteration:
-            iterator = iterable.__iter__()
-
-
-def learning_rate_with_decay(
-    batch_size, batch_denom, batches_per_epoch, boundary_epochs, decay_rates
-):
-    initial_learning_rate = args.lr * batch_size / batch_denom
-
-    boundaries = [int(batches_per_epoch * epoch) for epoch in boundary_epochs]
-    vals = [initial_learning_rate * decay for decay in decay_rates]
-
-    def learning_rate_fn(itr):
-        lt = [itr < b for b in boundaries] + [True]
-        i = np.argmax(lt)
-        return vals[i]
-
-    return learning_rate_fn
-
-
-def one_hot(x, K):
-    return np.array(x[:, None] == np.arange(K)[None, :], dtype=int)
-
-
-def accuracy(model, dataset_loader):
-    total_correct = 0
-    for x, y in dataset_loader:
-        x = x.to(device)
-        y = one_hot(np.array(y.numpy()), 10)
-
-        target_class = np.argmax(y, axis=1)
-        predicted_class = np.argmax(model(x).cpu().detach().numpy(), axis=1)
-        total_correct += np.sum(predicted_class == target_class)
-    return total_correct / len(dataset_loader.dataset)
-
-
-def count_parameters(model):
-    return sum(p.numel() for p in model.parameters() if p.requires_grad)
-
-
-def makedirs(dirname):
-    if not os.path.exists(dirname):
-        os.makedirs(dirname)
-
-
 def get_logger(
     logpath, filepath, package_files=[], displaying=True, saving=True, debug=False
 ):
@@ -200,7 +97,7 @@ def get_logger(
 
 
 if __name__ == "__main__":
-    makedirs(args.save)
+    Path(args.save).mkdir(parents=True, exist_ok=True)
     logger = get_logger(
         logpath=os.path.join(args.save, "logs"), filepath=os.path.abspath(__file__)
     )
@@ -231,6 +128,7 @@ if __name__ == "__main__":
         batches_per_epoch=batches_per_epoch,
         boundary_epochs=[60, 100, 140],
         decay_rates=[1, 0.1, 0.01, 0.001],
+        lr=args.lr,
     )
 
     optimizer = torch.optim.SGD(model.parameters(), lr=args.lr, momentum=0.9)
@@ -271,10 +169,10 @@ if __name__ == "__main__":
             b_nfe_meter.update(nfe_backward)
         end = time.time()
 
-        if itr % batches_per_epoch == 0 or True:
+        if itr % batches_per_epoch == 0:
             with torch.no_grad():
-                train_acc = accuracy(model, train_eval_loader)
-                val_acc = accuracy(model, test_loader)
+                train_acc = accuracy(model, train_eval_loader, device)
+                val_acc = accuracy(model, test_loader, device)
                 if val_acc > best_acc:
                     torch.save(
                         {"state_dict": model.state_dict(), "args": args},
@@ -293,3 +191,5 @@ if __name__ == "__main__":
                         val_acc,
                     )
                 )
+
+    run.stop()
