@@ -87,7 +87,7 @@ if __name__ == "__main__":
     )
     loss_meter = RunningAverageMeter()
 
-    target_sampler = get_sampler("checkerboard", device)
+    target_sampler = get_sampler(args.distribution_name, device)
 
     if args.train_dir is not None:
         if not os.path.exists(args.train_dir):

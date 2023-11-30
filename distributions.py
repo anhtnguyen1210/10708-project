@@ -138,6 +138,33 @@ class CheckerBoard(D.Distribution):
         i = 0
         low_y = []
         high_y = []
+        while 2 * i + 1 < range_y.shape[0]:
+            low_y.append(range_y[2 * i])
+            high_y.append(range_y[2 * i + 1])
+            i += 1
+        low_y, high_y = torch.tensor(low_y), torch.tensor(high_y)
+
+        comp_x = D.Independent(D.Uniform(low_x, high_x), 0)
+        mix_x = D.Categorical(torch.ones_like(low_x))
+        self.x_sampler_1 = D.MixtureSameFamily(mix_x, comp_x)
+
+        comp_y = D.Independent(D.Uniform(low_y, high_y), 0)
+        mix_y = D.Categorical(torch.ones_like(low_y))
+        self.y_sampler_1 = D.MixtureSameFamily(mix_y, comp_y)
+
+
+        i = 0
+        low_x = []
+        high_x = []
+        while 2 * i + 2 < range_x.shape[0]:
+            low_x.append(range_x[2 * i + 1])
+            high_x.append(range_x[2 * i + 2])
+            i += 1
+        low_x, high_x = torch.tensor(low_x), torch.tensor(high_x)
+
+        i = 0
+        low_y = []
+        high_y = []
         while 2 * i + 2 < range_y.shape[0]:
             low_y.append(range_y[2 * i + 1])
             high_y.append(range_y[2 * i + 2])
@@ -146,16 +173,28 @@ class CheckerBoard(D.Distribution):
 
         comp_x = D.Independent(D.Uniform(low_x, high_x), 0)
         mix_x = D.Categorical(torch.ones_like(low_x))
-        self.x_sampler = D.MixtureSameFamily(mix_x, comp_x)
+        self.x_sampler_2 = D.MixtureSameFamily(mix_x, comp_x)
 
         comp_y = D.Independent(D.Uniform(low_y, high_y), 0)
         mix_y = D.Categorical(torch.ones_like(low_y))
-        self.y_sampler = D.MixtureSameFamily(mix_y, comp_y)
+        self.y_sampler_2 = D.MixtureSameFamily(mix_y, comp_y)
 
     def sample(self, n):
-        return torch.stack(
-            [self.x_sampler.sample((n,)), self.y_sampler.sample((n,))], dim=1
+        n_first = n // 2
+        n_second = n - n_first
+
+        sample_first = torch.stack(
+            [self.x_sampler_1.sample((n_first,)), self.y_sampler_1.sample((n_first,))], dim=1
         )
+
+        sample_second = torch.stack(
+            [self.x_sampler_2.sample((n_second,)), self.y_sampler_2.sample((n_second,))], dim=1
+        )
+
+        X = torch.concatenate([sample_first, sample_second], dim=0)
+        if self.noise > 0.0:
+            X += self.noise_generator((n, ))
+        return X
 
 
 def get_distribution(distribution_name):
@@ -178,7 +217,7 @@ def get_sampler(distribution_name, device):
 
 
 def main():
-    sampler = get_sampler("multiple_diracs", "cuda")
+    sampler = get_sampler("checkerboard", "cuda")
     X, _ = sampler.sample(30000)
 
     import matplotlib.pyplot as plt
