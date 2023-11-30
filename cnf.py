@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from sklearn.datasets import make_circles
 from models import HyperNetwork, CNF
 from PIL import Image
+from distributions import get_sampler
 
 matplotlib.use("agg")
 
@@ -27,6 +28,7 @@ parser.add_argument("--weight_cur", type=float, default=0)
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--train_dir", type=str, default=None)
 parser.add_argument("--results_dir", type=str, default="./results")
+parser.add_argument("--distribution_name", type=str, default="two_circles")
 args = parser.parse_args()
 
 if args.adjoint:
@@ -69,14 +71,6 @@ class RunningAverageMeter(object):
         self.val = val
 
 
-def get_batch(num_samples):
-    points, _ = make_circles(n_samples=num_samples, noise=0.06, factor=0.5)
-    x = torch.tensor(points).type(torch.float32).to(device)
-    logp_diff_t1 = torch.zeros(num_samples, 1).type(torch.float32).to(device)
-
-    return (x, logp_diff_t1)
-
-
 if __name__ == "__main__":
     t0 = 0
     t1 = 10
@@ -93,6 +87,8 @@ if __name__ == "__main__":
     )
     loss_meter = RunningAverageMeter()
 
+    target_sampler = get_sampler("checkerboard", device)
+
     if args.train_dir is not None:
         if not os.path.exists(args.train_dir):
             os.makedirs(args.train_dir)
@@ -107,7 +103,7 @@ if __name__ == "__main__":
         for itr in range(1, args.niters + 1):
             optimizer.zero_grad()
 
-            x, logp_diff_t1 = get_batch(args.num_samples)
+            x, logp_diff_t1 = target_sampler.sample(args.num_samples)
 
             func.reset_nfe()
             z_t, logp_diff_t = odeint(
@@ -168,7 +164,7 @@ if __name__ == "__main__":
     if args.viz:
         viz_samples = 30000
         viz_timesteps = 41
-        target_sample, _ = get_batch(viz_samples)
+        target_sample, _ = target_sampler.sample(viz_samples)
 
         if not os.path.exists(args.results_dir):
             os.makedirs(args.results_dir)
