@@ -78,6 +78,32 @@ class TwoDiracs(D.Distribution):
         return X
 
 
+class MultipleDiracs(D.Distribution):
+    def __init__(
+        self, num_diracs, noise, batch_shape=None, event_shape=None, validate_args=None
+    ):
+        super().__init__(batch_shape, event_shape, validate_args)
+        self.num_diracs = num_diracs
+        linspace = torch.linspace(0, 2 * torch.pi, self.num_diracs + 1)
+        xs = torch.cos(linspace)
+        ys = torch.sin(linspace)
+        self.X = torch.stack([xs, ys], dim=1)
+
+        self.noise = noise
+        if noise > 0.0:
+            self.noise_generator = D.MultivariateNormal(
+                torch.tensor([0.0, 0.0]), torch.tensor([[1.0, 0.0], [0.0, 1.0]]) * noise
+            )
+
+    def sample(self, n):
+        sample_idx = torch.randint(0, self.num_diracs, (n,))
+        X = self.X[sample_idx]
+
+        if self.noise > 0.0:
+            X += self.noise_generator.sample((n,))
+        return X
+
+
 class CheckerBoard(D.Distribution):
     def __init__(
         self,
@@ -112,9 +138,9 @@ class CheckerBoard(D.Distribution):
         i = 0
         low_y = []
         high_y = []
-        while 2 * i + 1 < range_y.shape[0]:
-            low_y.append(range_y[2 * i])
-            high_y.append(range_y[2 * i + 1])
+        while 2 * i + 2 < range_y.shape[0]:
+            low_y.append(range_y[2 * i + 1])
+            high_y.append(range_y[2 * i + 2])
             i += 1
         low_y, high_y = torch.tensor(low_y), torch.tensor(high_y)
 
@@ -139,6 +165,8 @@ def get_distribution(distribution_name):
         distribution = TwoDiracs([[0.0, 1.0], [0.0, -1.0]], 0.00001)
     elif distribution_name == "checkerboard":
         distribution = CheckerBoard((4, 4))
+    elif distribution_name == "multiple_diracs":
+        distribution = MultipleDiracs(8, 0.006)
     else:
         raise Exception
     return distribution
@@ -150,7 +178,7 @@ def get_sampler(distribution_name, device):
 
 
 def main():
-    sampler = get_sampler("checkerboard", "cuda")
+    sampler = get_sampler("multiple_diracs", "cuda")
     X, _ = sampler.sample(30000)
 
     import matplotlib.pyplot as plt
