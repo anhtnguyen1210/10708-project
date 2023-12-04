@@ -24,7 +24,8 @@ parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--num_samples", type=int, default=512)
 parser.add_argument("--width", type=int, default=64)
 parser.add_argument("--hidden_dim", type=int, default=32)
-parser.add_argument("--weight_cur", type=float, default=0)
+parser.add_argument("--weight_c1", type=float, default=0)
+parser.add_argument("--weight_c2", type=float, default=0)
 parser.add_argument("--gpu", type=int, default=0)
 parser.add_argument("--train_dir", type=str, default=None)
 parser.add_argument("--results_dir", type=str, default="./results")
@@ -38,18 +39,21 @@ else:
 
 
 def curvature(traj):
+    # Return: C1 = \int ||dv/dt||dt, C2 = \int ||d^2v/dt^2||dt
     if isinstance(traj, list):
         traj = torch.stack(traj)
     velocity = traj[1:] - traj[:-1]
-    if len(traj[0].shape) == 2:
-        velocity_norm = velocity / torch.norm(velocity, dim=1, keepdim=True)
-    elif len(traj[0].shape) == 4:
-        velocity_norm = velocity / torch.norm(velocity, dim=[1, 2, 3], keepdim=True)
-    # Curvature using cosine distance
-    dot = torch.sum(velocity_norm[1:] * velocity_norm[:-1], dim=1)
-    cur = torch.sum(1 - dot)
+    accel = velocity[1:] - velocity[:-1]
+    
+    vel_norm = torch.norm(velocity, dim=-1)
+    accel_norm = torch.norm(accel, dim=-1)
+    C1 = torch.mean(vel_norm)
+    C2 = torch.mean(accel_norm)
 
-    return cur
+
+
+    return C1, C2
+
 
 
 class RunningAverageMeter(object):
@@ -75,7 +79,7 @@ if __name__ == "__main__":
     t0 = 0
     t1 = 10
     device = torch.device(
-        "cuda:" + str(args.gpu) if torch.cuda.is_available() else "cpu"
+        "cpu"
     )
 
     # model
@@ -121,19 +125,19 @@ if __name__ == "__main__":
 
             logp_x = p_z0.log_prob(z_t0).to(device) - logp_diff_t0.view(-1)
             loss_nll = -logp_x.mean(0)
-            cur = curvature(z_t)
+            C1, C2 = curvature(z_t)
 
-            weight_cur = np.min(
-                [args.weight_cur * itr / args.niters * 2, args.weight_cur]
-            )
-            loss = loss_nll + cur * weight_cur
+            # weight_cur = np.min(
+            #     [args.weight_cur * itr / args.niters * 2, args.weight_cur]
+            # )
+            loss = loss_nll + C1 * args.weight_c1 + C2 * args.weight_c2
 
             loss.backward()
             optimizer.step()
 
             loss_meter.update(loss.item())
             print(
-                f"Iter: {itr}, loss: {loss_meter.avg:.4f}, NLL: {loss_nll.item():.4f}, cur: {cur.item():.8f}, weight_cur: {weight_cur:.4f}, nfe: {nfe_f}"
+                f"Iter: {itr}, loss: {loss_meter.avg:.4f}, NLL: {loss_nll.item():.4f}, C1: {C1.item():.8f}, C2: {C2.item():.8f}, nfe: {nfe_f}"
             )
 
     except KeyboardInterrupt:
