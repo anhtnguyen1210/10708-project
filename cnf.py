@@ -2,6 +2,7 @@ import os
 import argparse
 import glob
 import numpy as np
+import csv
 import matplotlib
 import torch
 import torch.nn as nn
@@ -19,16 +20,17 @@ matplotlib.use("agg")
 parser = argparse.ArgumentParser()
 parser.add_argument("--adjoint", action="store_true")
 parser.add_argument("--viz", action="store_true")
-parser.add_argument("--niters", type=int, default=1000)
+parser.add_argument("--niters", type=int, default=10)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--num_samples", type=int, default=512)
 parser.add_argument("--width", type=int, default=64)
 parser.add_argument("--hidden_dim", type=int, default=32)
-parser.add_argument("--weight_c1", type=float, default=0)
-parser.add_argument("--weight_c2", type=float, default=0)
+parser.add_argument("--weight_c1", type=float, default=1)
+parser.add_argument("--weight_c2", type=float, default=1)
 parser.add_argument("--gpu", type=int, default=0)
-parser.add_argument("--train_dir", type=str, default=None)
+parser.add_argument("--train_dir", type=str, default='./checkpoints')
 parser.add_argument("--results_dir", type=str, default="./results")
+parser.add_argument("--log_dir", type=str, default='./logs')
 parser.add_argument("--distribution_name", type=str, default="two_circles")
 args = parser.parse_args()
 
@@ -44,16 +46,13 @@ def curvature(traj):
         traj = torch.stack(traj)
     velocity = traj[1:] - traj[:-1]
     accel = velocity[1:] - velocity[:-1]
-    
+
     vel_norm = torch.norm(velocity, dim=-1)
     accel_norm = torch.norm(accel, dim=-1)
     C1 = torch.mean(vel_norm)
     C2 = torch.mean(accel_norm)
 
-
-
     return C1, C2
-
 
 
 class RunningAverageMeter(object):
@@ -79,8 +78,11 @@ if __name__ == "__main__":
     t0 = 0
     t1 = 10
     device = torch.device(
-        "cpu"
+        "cuda:" + str(args.gpu) if torch.cuda.is_available() else "cpu"
     )
+    os.makedirs(args.train_dir, exist_ok=True)
+    os.makedirs(args.results_dir, exist_ok=True)
+    os.makedirs(args.log_dir, exist_ok=True)
 
     # model
     func = CNF(in_out_dim=2, hidden_dim=args.hidden_dim, width=args.width).to(device)
@@ -92,18 +94,23 @@ if __name__ == "__main__":
     loss_meter = RunningAverageMeter()
 
     target_sampler = get_sampler(args.distribution_name, device)
+    log_file = os.path.join(args.log_dir, "{}_{}_{}.csv".format(args.distribution_name, args.weight_c1, args.weight_c2))
+    fields = ["iter", "loss", 'NLL', 'C1', 'C2', 'nfe']
 
-    if args.train_dir is not None:
-        if not os.path.exists(args.train_dir):
-            os.makedirs(args.train_dir)
-        ckpt_path = os.path.join(args.train_dir, "ckpt.pth")
-        if os.path.exists(ckpt_path):
-            checkpoint = torch.load(ckpt_path)
-            func.load_state_dict(checkpoint["func_state_dict"])
-            optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
-            print("Loaded ckpt from {}".format(ckpt_path))
+    # if args.train_dir is not None:
+    #     if not os.path.exists(args.train_dir):
+    #         os.makedirs(args.train_dir)
+    #     ckpt_path = os.path.join(args.train_dir, "ckpt.pth")
+    #     if os.path.exists(ckpt_path):
+    #         checkpoint = torch.load(ckpt_path)
+    #         func.load_state_dict(checkpoint["func_state_dict"])
+    #         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+    #         print("Loaded ckpt from {}".format(ckpt_path))
 
-    try:
+
+    with open(log_file, 'w+') as csvfile:
+        csvwriter = csv.writer(csvfile)
+        csvwriter.writerow(fields)
         for itr in range(1, args.niters + 1):
             optimizer.zero_grad()
 
@@ -140,30 +147,20 @@ if __name__ == "__main__":
                 f"Iter: {itr}, loss: {loss_meter.avg:.4f}, NLL: {loss_nll.item():.4f}, C1: {C1.item():.8f}, C2: {C2.item():.8f}, nfe: {nfe_f}"
             )
 
-    except KeyboardInterrupt:
-        if args.train_dir is not None:
-            ckpt_path = os.path.join(args.train_dir, "ckpt.pth")
-            torch.save(
-                {
-                    "func_state_dict": func.state_dict(),
-                    "optimizer_state_dict": optimizer.state_dict(),
-                },
-                ckpt_path,
-            )
-            print("Stored ckpt at {}".format(ckpt_path))
+            # Write logs
+            log_line = [itr, loss_meter.avg, loss_nll.item(), C1.item(), C2.item(), nfe_f]
+            csvwriter.writerow(log_line)
 
-    if args.train_dir is not None:
-        ckpt_path = os.path.join(args.train_dir, "ckpt.pth")
-        torch.save(
-            {
-                "func_state_dict": func.state_dict(),
-                "optimizer_state_dict": optimizer.state_dict(),
-            },
-            ckpt_path,
-        )
-        print("Stored ckpt at {}".format(ckpt_path))
 
-    print("Training complete after {} iters.".format(itr))
+    # Save checkpoints
+    ckpt_path = os.path.join(args.train_dir, "{}_{}_{}.pth".format(args.distribution_name, args.weight_c1, args.weight_c2))
+    torch.save(
+        {
+            "func_state_dict": func.state_dict(),
+            "optimizer_state_dict": optimizer.state_dict(),
+        },
+        ckpt_path,
+    )
 
     if args.viz:
         viz_samples = 30000
@@ -187,7 +184,7 @@ if __name__ == "__main__":
             )
 
             cur = curvature(z_t_samples)
-            print(f"Curvature: {cur.item():.8f}")
+            print(f"Curvature: {cur[0].item():.8f}")
 
             # Generate evolution of density
             x = np.linspace(-1.5, 1.5, 100)

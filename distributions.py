@@ -152,7 +152,6 @@ class CheckerBoard(D.Distribution):
         mix_y = D.Categorical(torch.ones_like(low_y))
         self.y_sampler_1 = D.MixtureSameFamily(mix_y, comp_y)
 
-
         i = 0
         low_x = []
         high_x = []
@@ -184,16 +183,21 @@ class CheckerBoard(D.Distribution):
         n_second = n - n_first
 
         sample_first = torch.stack(
-            [self.x_sampler_1.sample((n_first,)), self.y_sampler_1.sample((n_first,))], dim=1
+            [self.x_sampler_1.sample((n_first,)), self.y_sampler_1.sample((n_first,))],
+            dim=1,
         )
 
         sample_second = torch.stack(
-            [self.x_sampler_2.sample((n_second,)), self.y_sampler_2.sample((n_second,))], dim=1
+            [
+                self.x_sampler_2.sample((n_second,)),
+                self.y_sampler_2.sample((n_second,)),
+            ],
+            dim=1,
         )
 
         X = torch.concatenate([sample_first, sample_second], dim=0)
         if self.noise > 0.0:
-            X += self.noise_generator((n, ))
+            X += self.noise_generator((n,))
         return X
 
 
