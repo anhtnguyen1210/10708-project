@@ -20,18 +20,18 @@ matplotlib.use("agg")
 parser = argparse.ArgumentParser()
 parser.add_argument("--adjoint", action="store_true")
 parser.add_argument("--viz", action="store_true")
-parser.add_argument("--niters", type=int, default=10)
+parser.add_argument("--niters", type=int, default=1000)
 parser.add_argument("--lr", type=float, default=1e-3)
 parser.add_argument("--num_samples", type=int, default=512)
 parser.add_argument("--width", type=int, default=64)
 parser.add_argument("--hidden_dim", type=int, default=32)
-parser.add_argument("--weight_c1", type=float, default=1)
-parser.add_argument("--weight_c2", type=float, default=1)
+parser.add_argument("--weight_c1", type=float, default=0.02)
+parser.add_argument("--weight_c2", type=float, default=0.0001)
 parser.add_argument("--gpu", type=int, default=0)
-parser.add_argument("--train_dir", type=str, default='./checkpoints')
+parser.add_argument("--train_dir", type=str, default="./checkpoints")
 parser.add_argument("--results_dir", type=str, default="./results")
-parser.add_argument("--log_dir", type=str, default='./logs')
-parser.add_argument("--distribution_name", type=str, default="two_circles")
+parser.add_argument("--log_dir", type=str, default="./logs")
+parser.add_argument("--distribution_name", type=str, default="checkerboard")
 args = parser.parse_args()
 
 if args.adjoint:
@@ -94,8 +94,11 @@ if __name__ == "__main__":
     loss_meter = RunningAverageMeter()
 
     target_sampler = get_sampler(args.distribution_name, device)
-    log_file = os.path.join(args.log_dir, "{}_{}_{}.csv".format(args.distribution_name, args.weight_c1, args.weight_c2))
-    fields = ["iter", "loss", 'NLL', 'C1', 'C2', 'nfe']
+    log_file = os.path.join(
+        args.log_dir,
+        "{}_{}_{}.csv".format(args.distribution_name, args.weight_c1, args.weight_c2),
+    )
+    fields = ["iter", "loss", "NLL", "C1", "C2", "nfe"]
 
     # if args.train_dir is not None:
     #     if not os.path.exists(args.train_dir):
@@ -107,8 +110,7 @@ if __name__ == "__main__":
     #         optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
     #         print("Loaded ckpt from {}".format(ckpt_path))
 
-
-    with open(log_file, 'w+') as csvfile:
+    with open(log_file, "w+") as csvfile:
         csvwriter = csv.writer(csvfile)
         csvwriter.writerow(fields)
         for itr in range(1, args.niters + 1):
@@ -148,12 +150,21 @@ if __name__ == "__main__":
             )
 
             # Write logs
-            log_line = [itr, loss_meter.avg, loss_nll.item(), C1.item(), C2.item(), nfe_f]
+            log_line = [
+                itr,
+                loss_meter.avg,
+                loss_nll.item(),
+                C1.item(),
+                C2.item(),
+                nfe_f,
+            ]
             csvwriter.writerow(log_line)
 
-
     # Save checkpoints
-    ckpt_path = os.path.join(args.train_dir, "{}_{}_{}.pth".format(args.distribution_name, args.weight_c1, args.weight_c2))
+    ckpt_path = os.path.join(
+        args.train_dir,
+        "{}_{}_{}.pth".format(args.distribution_name, args.weight_c1, args.weight_c2),
+    )
     torch.save(
         {
             "func_state_dict": func.state_dict(),
@@ -183,8 +194,8 @@ if __name__ == "__main__":
                 method="dopri5",
             )
 
-            cur = curvature(z_t_samples)
-            print(f"Curvature: {cur[0].item():.8f}")
+            # cur = curvature(z_t_samples)
+            # print(f"Curvature: {cur[0].item():.8f}")
 
             # Generate evolution of density
             x = np.linspace(-1.5, 1.5, 100)
