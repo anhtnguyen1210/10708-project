@@ -23,7 +23,7 @@ parser.add_argument("--hidden_dim", type=int, default=32)
 parser.add_argument("--weight_c1", type=float, default=1)
 parser.add_argument("--weight_c2", type=float, default=1)
 parser.add_argument("--gpu", type=int, default=0)
-parser.add_argument("--train_dir", type=str, default="./oldcheckpoints")
+parser.add_argument("--train_dir", type=str, default="./checkpoints")
 parser.add_argument("--results_dir", type=str, default="./results")
 parser.add_argument("--log_dir", type=str, default="./oldlogs")
 parser.add_argument("--distribution_name", type=str, default="two_circles")
@@ -50,6 +50,30 @@ def merge_image(imgs, margin=0):
     return new_im
 
 
+def histo_prior_distribution(device='cuda'):
+    p_z0 = torch.distributions.MultivariateNormal(
+        loc=torch.tensor([0.0, 0.0]).to(device),
+        covariance_matrix=torch.tensor([[0.1, 0.0], [0.0, 0.1]]).to(device),
+    )
+    X = p_z0.sample((30000, ))
+
+    fig = plt.figure(figsize=(4, 4), dpi=300)
+    plt.tight_layout()
+    plt.axis("off")
+    plt.margins(0, 0)
+    ax1 = fig.add_subplot(1, 1, 1)
+    ax1.hist2d(
+        *X.detach().cpu().numpy().transpose(1, 0),
+        bins=300,
+        density=True,
+        range=[[-1.5, 1.5], [-1.5, 1.5]],
+    )
+    ax1.get_xaxis().set_ticks([])
+    ax1.get_yaxis().set_ticks([])
+    plt.savefig("hist_true_{}.png".format('prior'), bbox_inches="tight")
+
+
+
 def histo_target_distribution(distribution_name, device="cuda", num_points=30000):
     sampler = get_sampler(distribution_name, device)
     X, _ = sampler.sample(num_points)
@@ -71,7 +95,7 @@ def histo_target_distribution(distribution_name, device="cuda", num_points=30000
 
 
 def through_time(
-    c1, c2, distribution_name, device="cuda", viz_samples=30000, viz_timesteps=41
+    c1, c2, distribution_name, device="cuda", viz_samples=30000, viz_timesteps=41, checkpoint_folder='./checkpoints'
 ):
     target_sampler = get_sampler(distribution_name, device)
     target_sample, _ = target_sampler.sample(viz_samples)
@@ -155,7 +179,7 @@ def through_time(
 
     
 
-def c1_draw(distribution_name, c1s=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5], checkpoints_folder='./oldcheckpoints', num_points=30000, device='cuda'):
+def c1_draw(distribution_name, c1s=[0.0, 0.001, 0.01, 0.1, 1.0, 5.0], checkpoints_folder='./oldcheckpoints', num_points=30000, device='cuda'):
     NLLs = []
     curvatures = []
     target_sampler = get_sampler(distribution_name, device)
@@ -182,18 +206,22 @@ def c1_draw(distribution_name, c1s=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5], checkpoints_f
             nll = -logp_x.mean(0)
             NLLs.append(nll.item())
     
-    # print(NLLs)
-    # print(curvatures)
-    plt.plot(c1s, NLLs, label='NLL')
-    plt.plot(c1s, curvatures, label='C1')
-    plt.legend()
-    plt.xlabel('weight_c1 - {}'.format(distribution_name))
+    fig = plt.figure(1, figsize=(7, 6))
+    ax = fig.add_subplot(111)
+
+    ax.plot(curvatures, NLLs, label='NLL')
+    ax.legend()
+    ax.set_xlabel('c1 - {}'.format(distribution_name))
+    ax.xaxis.set_ticks(curvatures)
     plt.savefig('{}.png'.format(distribution_name))
             
 
 def main():
     # through_time(0.0, 0.0, args.distribution_name)
-    c1_draw('checkerboard')
+    # c1_draw('two_circles', checkpoints_folder=args.train_dir)
+    # through_time(0.0, 0.0, 'two_circles', checkpoint_folder=args.train_dir)
+    # histo_target_distribution('two_diracs')
+    histo_prior_distribution()
 
 
 if __name__ == "__main__":

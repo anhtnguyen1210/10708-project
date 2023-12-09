@@ -203,13 +203,13 @@ class CheckerBoard(D.Distribution):
 
 def get_distribution(distribution_name):
     if distribution_name == "two_circles":
-        distribution = TwoCircles(0.006, 0.5)
+        distribution = TwoCircles(0.005, 0.5)
     elif distribution_name == "two_diracs":
         distribution = TwoDiracs([[0.0, 1.0], [0.0, -1.0]], 0.00001)
     elif distribution_name == "checkerboard":
-        distribution = CheckerBoard((4, 4))
+        distribution = CheckerBoard((2, 2), noise=0.005)
     elif distribution_name == "multiple_diracs":
-        distribution = MultipleDiracs(8, 0.006)
+        distribution = MultipleDiracs(2, 0.0000)
     else:
         raise Exception
     return distribution
